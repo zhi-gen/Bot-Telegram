@@ -1,14 +1,14 @@
 const { Telegraf, Markup } = require('telegraf');
+const axios = require('axios');
+const sharp = require('sharp');
 
 // --- KONFIGURASI PENTING ---
-// Ambil data dari Environment Variables di Vercel
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID; // ID Channel, contoh: -1001234567890
-const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME; // Username channel dengan '@', contoh: @infobotchannel
+const CHANNEL_ID = process.env.CHANNEL_ID;
+const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME;
 
-// Pastikan semua variabel ada
 if (!BOT_TOKEN || !CHANNEL_ID || !CHANNEL_USERNAME) {
-  console.error("Pastikan BOT_TOKEN, CHANNEL_ID, dan CHANNEL_USERNAME sudah diatur di Vercel!");
+  console.error("Variabel lingkungan belum diatur!");
   process.exit(1);
 }
 
@@ -31,84 +31,118 @@ const convertMenuKeyboard = Markup.inlineKeyboard([
 ]);
 
 // --- FUNGSI BANTUAN ---
-// Fungsi untuk mengecek apakah user adalah anggota channel
 async function isUserSubscribed(userId) {
   try {
     const member = await bot.telegram.getChatMember(CHANNEL_ID, userId);
-    // Status bisa 'creator', 'administrator', 'member', 'restricted', 'left', 'kicked'
     return ['creator', 'administrator', 'member'].includes(member.status);
   } catch (e) {
-    console.error("Gagal mengecek status member:", e);
     return false;
   }
 }
 
 // --- LOGIKA BOT ---
 
-// Perintah /start
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
   const isSubscribed = await isUserSubscribed(userId);
-
   if (isSubscribed) {
-    await ctx.reply(`Halo ${ctx.from.first_name}! Selamat datang kembali. Silakan pilih menu di bawah.`, mainMenuKeyboard);
+    await ctx.reply(`Halo ${ctx.from.first_name}! Selamat datang kembali.`, mainMenuKeyboard);
   } else {
-    await ctx.reply(
-      `Halo ${ctx.from.first_name}!\n\nUntuk menggunakan bot ini, Anda harus bergabung ke channel kami terlebih dahulu.`,
-      joinChannelKeyboard
-    );
+    await ctx.reply(`Halo ${ctx.from.first_name}! Anda harus bergabung ke channel kami.`, joinChannelKeyboard);
   }
 });
 
-// Menangani tombol "Saya Sudah Bergabung"
 bot.action('check_join', async (ctx) => {
   const userId = ctx.from.id;
   const isSubscribed = await isUserSubscribed(userId);
-
   if (isSubscribed) {
-    // Hapus pesan "gabung channel" dan tampilkan menu utama
     await ctx.deleteMessage();
-    await ctx.reply('Terima kasih sudah bergabung! Sekarang Anda bisa menggunakan semua fitur.', mainMenuKeyboard);
+    await ctx.reply('Terima kasih! Anda sekarang bisa menggunakan bot.', mainMenuKeyboard);
   } else {
-    // Beri peringatan jika belum bergabung
-    await ctx.answerCbQuery('Anda belum bergabung ke channel. Silakan bergabung terlebih dahulu.', { show_alert: true });
+    await ctx.answerCbQuery('Anda belum bergabung. Silakan bergabung terlebih dahulu.', { show_alert: true });
   }
 });
 
-// Menangani menu '⏳ Convert'
 bot.hears('⏳ Convert', async (ctx) => {
-  const userId = ctx.from.id;
-  const isSubscribed = await isUserSubscribed(userId);
-
+  const isSubscribed = await isUserSubscribed(ctx.from.id);
   if (isSubscribed) {
-    await ctx.reply('Silakan pilih jenis konversi:', convertMenuKeyboard);
+    await ctx.reply('Pilih jenis konversi. Untuk konversi, cukup kirimkan file Anda (JPG atau Video).', convertMenuKeyboard);
   } else {
-    await ctx.reply('Akses ditolak. Anda harus bergabung ke channel kami terlebih dahulu.', joinChannelKeyboard);
+    await ctx.reply('Akses ditolak. Gabung channel kami dulu ya.', joinChannelKeyboard);
   }
 });
 
-// Menangani menu About dan Donasi
-bot.hears('📌 About', (ctx) => ctx.reply('Ini adalah bot konversi file yang dibuat oleh [Nama Anda].'));
-bot.hears('💰 Donasi', (ctx) => ctx.reply('Anda bisa mendukung kami melalui [Link Donasi Anda].'));
-
-
-// Menangani tombol inline untuk konversi (FITUR DILINDUNGI)
-const protectedActions = ['video_to_mp3', 'jpg_to_png'];
-bot.action(protectedActions, async (ctx) => {
-  const userId = ctx.from.id;
-  const isSubscribed = await isUserSubscribed(userId);
-
-  if (isSubscribed) {
-    // Tampilkan pesan bahwa fitur sedang dikembangkan
-    const action = ctx.callbackQuery.data;
-    await ctx.answerCbQuery(); // Hentikan loading di tombol
-    await ctx.reply(`Fitur "${action}" sedang dalam pengembangan. Coba lagi nanti ya!`);
-  } else {
-    await ctx.answerCbQuery('Akses ditolak! Silakan bergabung ke channel terlebih dahulu.', { show_alert: true });
-  }
+// --- PERUBAHAN MENU ABOUT & DONASI ---
+// Menggunakan parse_mode: 'HTML' agar bisa menyisipkan link
+bot.hears('📌 About', (ctx) => {
+    const aboutText = `Ini adalah bot konversi file yang dibuat oleh :
+💬 <a href="https://t.me/BloggerManado">Zhigen</a>`;
+    ctx.replyWithHTML(aboutText);
 });
 
-// Handler untuk Vercel
+bot.hears('💰 Donasi', (ctx) => {
+    const donasiText = `Anda bisa mendukung kami melalui 👇
+☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`;
+    ctx.replyWithHTML(donasiText);
+});
+
+// --- FITUR BARU: JPG to PNG ---
+bot.on('photo', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) {
+        return ctx.reply('Fitur ini hanya untuk member channel. Silakan join dulu.', joinChannelKeyboard);
+    }
+    
+    try {
+        await ctx.reply('Gambar diterima, sedang memproses menjadi PNG...');
+        
+        // Ambil foto dengan resolusi tertinggi
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fileId = photo.file_id;
+        
+        // Dapatkan link download file dari Telegram
+        const fileLink = await ctx.telegram.getFileLink(fileId);
+        
+        // Unduh gambar menggunakan axios
+        const response = await axios({
+            url: fileLink.href,
+            responseType: 'arraybuffer'
+        });
+        const buffer = Buffer.from(response.data, 'binary');
+        
+        // Konversi gambar ke PNG menggunakan Sharp
+        const pngBuffer = await sharp(buffer).png().toBuffer();
+        
+        // Kirim kembali sebagai dokumen untuk menjaga kualitas dan format
+        await ctx.replyWithDocument({
+            source: pngBuffer,
+            filename: `converted_by_zhigenbot.png`
+        });
+        
+    } catch (error) {
+        console.error('Error konversi JPG ke PNG:', error);
+        await ctx.reply('Maaf, terjadi kesalahan saat memproses gambar Anda.');
+    }
+});
+
+
+// --- FITUR BARU: VIDEO to MP3 (SANGAT KOMPLEKS) ---
+// Catatan: Konversi Video ke MP3 di Vercel sangat sulit karena butuh software FFmpeg.
+// Untuk saat ini, kita buat bot merespons bahwa fitur sedang dikembangkan.
+bot.on('video', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) {
+        return ctx.reply('Fitur ini hanya untuk member channel. Silakan join dulu.', joinChannelKeyboard);
+    }
+
+    // Beri tahu user bahwa fitur sedang dikembangkan
+    await ctx.reply('🎬 Video diterima! Mohon maaf, fitur konversi Video ke MP3 ini sangat kompleks dan masih dalam tahap pengembangan lebih lanjut. Terima kasih atas pengertiannya 😊');
+    
+    // Di masa depan, di sinilah logika download dan konversi video akan ditempatkan.
+});
+
+
+// Handler untuk Vercel (Jangan diubah)
 module.exports = async (req, res) => {
   try {
     await bot.handleUpdate(req.body);
