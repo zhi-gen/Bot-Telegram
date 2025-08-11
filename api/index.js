@@ -2,9 +2,9 @@ const { Telegraf, Markup } = require('telegraf');
 
 // --- KONFIGURASI PENTING ---
 // Ambil data dari Environment Variables di Vercel
-const BOT_TOKEN = process.env.8109412047:AAEXkOiK0EVwR2wErEnEIQ2_twQIritF23s;
-const CHANNEL_ID = process.env.-1002624070375; // ID Channel, contoh: -1001234567890
-const CHANNEL_USERNAME = process.env.@channelpaoruus; // Username channel dengan '@', contoh: @infobotchannel
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHANNEL_ID = process.env.CHANNEL_ID; // ID Channel, contoh: -1001234567890
+const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME; // Username channel dengan '@', contoh: @infobotchannel
 
 // Pastikan semua variabel ada
 if (!BOT_TOKEN || !CHANNEL_ID || !CHANNEL_USERNAME) {
