@@ -22,24 +22,35 @@ const joinChannelKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback(`✅ Saya Sudah Bergabung`, 'check_join')]
 ]);
 
-// --- KEYBOARD DIPERBARUI ---
 const mainMenuKeyboard = Markup.keyboard([
   ['⏳ Link To MP3'],
   ['🖼 Jpg To Png'],
   ['📌 About', '💰 Donasi']
 ]).resize();
 
+// Fungsi "Penjaga" utama kita
 async function isUserSubscribed(userId) {
   try {
     const member = await bot.telegram.getChatMember(CHANNEL_ID, userId);
+    // Hanya izinkan jika statusnya adalah member, administrator, atau creator
     return ['creator', 'administrator', 'member'].includes(member.status);
-  } catch (e) { return false; }
+  } catch (e) {
+    // Jika ada error (misal bot ditendang dari channel), anggap user belum join
+    console.error("Gagal mengecek status member:", e.message);
+    return false;
+  }
 }
 
 // --- LOGIKA UTAMA BOT ---
 
 bot.start(async (ctx) => {
-    await ctx.reply('Halo! Saya adalah bot konversi file. Silakan pilih menu di bawah. Pastikan Anda sudah bergabung ke channel kami ya!', mainMenuKeyboard);
+    // Cek status saat /start
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (isSubscribed) {
+        await ctx.reply('Halo! Saya adalah bot konversi. Silakan pilih menu di bawah.', mainMenuKeyboard);
+    } else {
+        await ctx.reply('Selamat datang! Untuk menggunakan bot ini, Anda harus bergabung ke channel kami terlebih dahulu.', joinChannelKeyboard);
+    }
 });
 
 bot.action('check_join', async (ctx) => {
@@ -48,36 +59,57 @@ bot.action('check_join', async (ctx) => {
     await ctx.deleteMessage();
     await ctx.reply('Terima kasih! Anda sekarang bisa menggunakan bot.', mainMenuKeyboard);
   } else {
-    await ctx.answerCbQuery('Anda belum bergabung.', { show_alert: true });
+    await ctx.answerCbQuery('Anda terdeteksi belum bergabung. Silakan bergabung terlebih dahulu.', { show_alert: true });
   }
 });
 
-// --- TOMBOL BARU & INSTRUKSI ---
-bot.hears('⏳ Link To MP3', (ctx) => ctx.reply('Silakan kirimkan link video (YouTube, TikTok, FB) untuk diubah ke MP3.'));
-bot.hears('🖼 Jpg To Png', (ctx) => ctx.reply('Silakan kirimkan gambar/foto Anda (format JPG) untuk diubah ke PNG.'));
-bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
-bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung kami melalui 👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
+// --- TOMBOL MENU UTAMA DENGAN PENJAGA ---
+// Semua 'hears' sekarang menjadi 'async' untuk bisa memanggil 'isUserSubscribed'
 
-// --- PENANGANAN FITUR ---
+bot.hears('⏳ Link To MP3', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+    
+    ctx.reply('Silakan kirimkan link video (YouTube, TikTok, FB) untuk diubah ke MP3.');
+});
 
-// FITUR JPG to PNG (DIKEMBALIKAN)
+bot.hears('🖼 Jpg To Png', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+
+    ctx.reply('Silakan kirimkan gambar/foto Anda (format JPG) untuk diubah ke PNG.');
+});
+
+bot.hears('📌 About', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+
+    ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`);
+});
+
+bot.hears('💰 Donasi', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+
+    ctx.replyWithHTML(`Anda bisa mendukung kami melalui 👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`);
+});
+
+// --- PENANGANAN FITUR INTI (DENGAN PENJAGA) ---
+
 bot.on('photo', async (ctx) => {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel. Silakan join dulu.', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
     
     let processingMessage = null;
     try {
         processingMessage = await ctx.reply('🖼 Gambar diterima, memproses menjadi PNG...');
-        
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
-        
         const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
         const pngBuffer = await sharp(response.data).png().toBuffer();
         
         await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
         await ctx.replyWithDocument({ source: pngBuffer, filename: `converted.png` }, { caption: `Konversi ke PNG berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
-        
     } catch (error) {
         console.error('Error konversi JPG ke PNG:', error);
         if (processingMessage) await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
@@ -85,49 +117,37 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// FITUR Link Downloader (TETAP ADA)
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
 
-    if (!urlMatch) return; // Abaikan jika bukan link
+    if (!urlMatch) return;
 
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel.', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
 
     const userLink = urlMatch[0];
     let processingMessage = null;
 
     try {
         processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader...');
-
         const options = {
             method: 'POST',
             url: `https://${RAPIDAPI_HOST}/v1/social/autolink`,
-            headers: {
-                'Content-Type': 'application/json',
-                'X-RapidAPI-Key': RAPIDAPI_KEY,
-                'X-RapidAPI-Host': RAPIDAPI_HOST
-            },
+            headers: { 'Content-Type': 'application/json', 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': RAPIDAPI_HOST },
             data: { url: userLink }
         };
 
         const response = await axios.request(options);
-        console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
-
         const medias = response.data.medias;
         const audioMedia = medias.find(media => media.type === 'audio');
 
         if (audioMedia && audioMedia.url) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
-            await ctx.replyWithAudio(
-                { url: audioMedia.url },
-                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' }
-            );
+            await ctx.replyWithAudio({ url: audioMedia.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' });
         } else {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut.');
         }
-
     } catch (error) {
         console.error('Error Detail:', error.response ? error.response.data : error.message);
         if (processingMessage) await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
