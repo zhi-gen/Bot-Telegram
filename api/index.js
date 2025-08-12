@@ -21,7 +21,13 @@ const joinChannelKeyboard = Markup.inlineKeyboard([
   [Markup.button.url(`➡️ Gabung Channel`, `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
   [Markup.button.callback(`✅ Saya Sudah Bergabung`, 'check_join')]
 ]);
-const mainMenuKeyboard = Markup.keyboard([ ['⏳ Convert'], ['📌 About', '💰 Donasi'] ]).resize();
+
+// --- KEYBOARD DIPERBARUI ---
+const mainMenuKeyboard = Markup.keyboard([
+  ['⏳ Link To MP3'],
+  ['🖼 Jpg To Png'],
+  ['📌 About', '💰 Donasi']
+]).resize();
 
 async function isUserSubscribed(userId) {
   try {
@@ -33,7 +39,7 @@ async function isUserSubscribed(userId) {
 // --- LOGIKA UTAMA BOT ---
 
 bot.start(async (ctx) => {
-    await ctx.reply('Halo! Saya adalah bot pengunduh video dari YouTube, TikTok, dan Facebook. Kirimkan saja linknya, dan saya akan mengubahnya menjadi MP3. Pastikan Anda sudah bergabung ke channel kami ya!', mainMenuKeyboard);
+    await ctx.reply('Halo! Saya adalah bot konversi file. Silakan pilih menu di bawah. Pastikan Anda sudah bergabung ke channel kami ya!', mainMenuKeyboard);
 });
 
 bot.action('check_join', async (ctx) => {
@@ -46,16 +52,45 @@ bot.action('check_join', async (ctx) => {
   }
 });
 
-bot.hears('⏳ Convert', (ctx) => ctx.reply('Silakan kirimkan link dari YouTube, TikTok, atau Facebook.'));
-bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi file yang dibuat oleh :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
+// --- TOMBOL BARU & INSTRUKSI ---
+bot.hears('⏳ Link To MP3', (ctx) => ctx.reply('Silakan kirimkan link video (YouTube, TikTok, FB) untuk diubah ke MP3.'));
+bot.hears('🖼 Jpg To Png', (ctx) => ctx.reply('Silakan kirimkan gambar/foto Anda (format JPG) untuk diubah ke PNG.'));
+bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
 bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung kami melalui 👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
 
-// --- PENANGANAN FITUR UTAMA: LINK DOWNLOADER ---
+// --- PENANGANAN FITUR ---
+
+// FITUR JPG to PNG (DIKEMBALIKAN)
+bot.on('photo', async (ctx) => {
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel. Silakan join dulu.', joinChannelKeyboard);
+    
+    let processingMessage = null;
+    try {
+        processingMessage = await ctx.reply('🖼 Gambar diterima, memproses menjadi PNG...');
+        
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+        
+        const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
+        const pngBuffer = await sharp(response.data).png().toBuffer();
+        
+        await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+        await ctx.replyWithDocument({ source: pngBuffer, filename: `converted.png` }, { caption: `Konversi ke PNG berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
+        
+    } catch (error) {
+        console.error('Error konversi JPG ke PNG:', error);
+        if (processingMessage) await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+        await ctx.reply('Maaf, terjadi kesalahan saat memproses gambar Anda.');
+    }
+});
+
+// FITUR Link Downloader (TETAP ADA)
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
 
-    if (!urlMatch) return;
+    if (!urlMatch) return; // Abaikan jika bukan link
 
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel.', joinChannelKeyboard);
@@ -64,7 +99,7 @@ bot.on('text', async (ctx) => {
     let processingMessage = null;
 
     try {
-        processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader... Mohon tunggu sebentar.');
+        processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader...');
 
         const options = {
             method: 'POST',
@@ -74,13 +109,10 @@ bot.on('text', async (ctx) => {
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
                 'X-RapidAPI-Host': RAPIDAPI_HOST
             },
-            data: {
-                url: userLink
-            }
+            data: { url: userLink }
         };
 
         const response = await axios.request(options);
-        
         console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
 
         const medias = response.data.medias;
@@ -88,26 +120,21 @@ bot.on('text', async (ctx) => {
 
         if (audioMedia && audioMedia.url) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
-            
             await ctx.replyWithAudio(
                 { url: audioMedia.url },
                 { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' }
             );
         } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut. Mungkin video ini tidak memiliki suara atau tidak didukung.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut.');
         }
 
     } catch (error) {
         console.error('Error Detail:', error.response ? error.response.data : error.message);
-        if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan. Pastikan link Anda benar dan publik, atau coba lagi nanti.');
-        } else {
-            await ctx.reply('Maaf, terjadi kesalahan. Pastikan link Anda benar dan publik.');
-        }
+        if (processingMessage) await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
+        else await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
     }
 });
 
-// --- BAGIAN YANG DIPERBAIKI ---
 // Handler untuk Vercel
 module.exports = async (req, res) => {
   try {
