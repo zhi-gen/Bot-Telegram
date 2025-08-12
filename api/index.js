@@ -66,29 +66,25 @@ bot.on('text', async (ctx) => {
     try {
         processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader... Mohon tunggu sebentar.');
 
-        // --- INI BAGIAN YANG DIPERBAIKI ---
         const options = {
-            method: 'POST', // 1. Metode diubah menjadi POST
-            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`, // 2. URL Endpoint diperbaiki
+            method: 'POST',
+            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`,
             headers: {
-                'Content-Type': 'application/json', // Header penting ditambahkan
+                'Content-Type': 'application/json',
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
                 'X-RapidAPI-Host': RAPIDAPI_HOST
             },
-            data: { // 3. Link dikirim melalui 'data' (body), bukan 'params'
+            data: {
                 url: userLink
             }
         };
 
         const response = await axios.request(options);
         
-        // Menambahkan log untuk melihat struktur respons asli dari API
         console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
 
-        // Mencari link audio dari respons
-        // Catatan: 'response.data.medias' mungkin perlu disesuaikan berdasarkan hasil log di atas
         const medias = response.data.medias;
-        const audioMedia = medias.find(media => media.type === 'audio' && media.quality === 'highest');
+        const audioMedia = medias.find(media => media.type === 'audio');
 
         if (audioMedia && audioMedia.url) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
@@ -111,8 +107,9 @@ bot.on('text', async (ctx) => {
     }
 });
 
+// --- BAGIAN YANG DIPERBAIKI ---
 // Handler untuk Vercel
-module.log = async (req, res) => {
+module.exports = async (req, res) => {
   try {
     await bot.handleUpdate(req.body);
   } finally {
