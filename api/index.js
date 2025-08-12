@@ -1,50 +1,46 @@
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const sharp = require('sharp');
+const CloudConvert = require('cloudconvert');
 
 // --- KONFIGURASI PENTING ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME;
+const CLOUDCVRT_API_KEY = process.env.CLOUDCVRT_API_KEY; // API Key Baru!
 
-if (!BOT_TOKEN || !CHANNEL_ID || !CHANNEL_USERNAME) {
-  console.error("Variabel lingkungan belum diatur!");
+// Cek semua variabel
+if (!BOT_TOKEN || !CHANNEL_ID || !CHANNEL_USERNAME || !CLOUDCVRT_API_KEY) {
+  console.error("Satu atau lebih Environment Variables belum diatur!");
   process.exit(1);
 }
 
 const bot = new Telegraf(BOT_TOKEN);
+const cloudConvert = new CloudConvert(CLOUDCVRT_API_KEY);
 
-// --- KEYBOARD & TOMBOL ---
+// --- KEYBOARD & TOMBOL (Tidak berubah) ---
 const joinChannelKeyboard = Markup.inlineKeyboard([
   [Markup.button.url(`➡️ Gabung Channel`, `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
   [Markup.button.callback(`✅ Saya Sudah Bergabung`, 'check_join')]
 ]);
-
-const mainMenuKeyboard = Markup.keyboard([
-  ['⏳ Convert'],
-  ['📌 About', '💰 Donasi']
-]).resize();
-
+const mainMenuKeyboard = Markup.keyboard([ ['⏳ Convert'], ['📌 About', '💰 Donasi'] ]).resize();
 const convertMenuKeyboard = Markup.inlineKeyboard([
-  [Markup.button.callback('📂 Video to Mp3', 'video_to_mp3')],
-  [Markup.button.callback('🖼 Jpg to Png', 'jpg_to_png')]
+  [Markup.button.callback('📂 Video to Mp3 (Via Link)', 'info_videolink')],
+  [Markup.button.callback('🖼 Jpg to Png (Via File)', 'info_jpgfile')]
 ]);
 
-// --- FUNGSI BANTUAN ---
+// --- FUNGSI BANTUAN (Tidak berubah) ---
 async function isUserSubscribed(userId) {
   try {
     const member = await bot.telegram.getChatMember(CHANNEL_ID, userId);
     return ['creator', 'administrator', 'member'].includes(member.status);
-  } catch (e) {
-    return false;
-  }
+  } catch (e) { return false; }
 }
 
-// --- LOGIKA BOT ---
+// --- LOGIKA UTAMA BOT ---
 
 bot.start(async (ctx) => {
-  const userId = ctx.from.id;
-  const isSubscribed = await isUserSubscribed(userId);
+  const isSubscribed = await isUserSubscribed(ctx.from.id);
   if (isSubscribed) {
     await ctx.reply(`Halo ${ctx.from.first_name}! Selamat datang kembali.`, mainMenuKeyboard);
   } else {
@@ -53,94 +49,122 @@ bot.start(async (ctx) => {
 });
 
 bot.action('check_join', async (ctx) => {
-  const userId = ctx.from.id;
-  const isSubscribed = await isUserSubscribed(userId);
+  const isSubscribed = await isUserSubscribed(ctx.from.id);
   if (isSubscribed) {
     await ctx.deleteMessage();
     await ctx.reply('Terima kasih! Anda sekarang bisa menggunakan bot.', mainMenuKeyboard);
   } else {
-    await ctx.answerCbQuery('Anda belum bergabung. Silakan bergabung terlebih dahulu.', { show_alert: true });
+    await ctx.answerCbQuery('Anda belum bergabung.', { show_alert: true });
   }
 });
 
 bot.hears('⏳ Convert', async (ctx) => {
   const isSubscribed = await isUserSubscribed(ctx.from.id);
   if (isSubscribed) {
-    await ctx.reply('Pilih jenis konversi. Untuk konversi, cukup kirimkan file Anda (JPG atau Video).', convertMenuKeyboard);
+    await ctx.reply('Silakan pilih jenis konversi. Cukup kirimkan file (JPG) atau link video (YouTube, dll).', convertMenuKeyboard);
   } else {
     await ctx.reply('Akses ditolak. Gabung channel kami dulu ya.', joinChannelKeyboard);
   }
 });
 
-// --- PERUBAHAN MENU ABOUT & DONASI ---
-// Menggunakan parse_mode: 'HTML' agar bisa menyisipkan link
-bot.hears('📌 About', (ctx) => {
-    const aboutText = `Ini adalah bot konversi file yang dibuat oleh :
-💬 <a href="https://t.me/BloggerManado">Zhigen</a>`;
-    ctx.replyWithHTML(aboutText);
-});
+bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi file yang dibuat oleh :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
+bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung kami melalui 👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
 
-bot.hears('💰 Donasi', (ctx) => {
-    const donasiText = `Anda bisa mendukung kami melalui 👇
-☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`;
-    ctx.replyWithHTML(donasiText);
-});
+// --- PENANGANAN FITUR ---
 
-// --- FITUR BARU: JPG to PNG ---
+// Info tombol inline
+bot.action('info_videolink', ctx => ctx.answerCbQuery('Kirimkan saja link video (misal dari YouTube) langsung ke chat ini.', { show_alert: true }));
+bot.action('info_jpgfile', ctx => ctx.answerCbQuery('Kirimkan saja foto/gambar Anda langsung ke chat ini.', { show_alert: true }));
+
+
+// Fitur JPG to PNG (Tidak berubah)
 bot.on('photo', async (ctx) => {
-    const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) {
-        return ctx.reply('Fitur ini hanya untuk member channel. Silakan join dulu.', joinChannelKeyboard);
+  const isSubscribed = await isUserSubscribed(ctx.from.id);
+  if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel.', joinChannelKeyboard);
+  try {
+    await ctx.reply('Gambar diterima, memproses menjadi PNG...');
+    const photo = ctx.message.photo[ctx.message.photo.length - 1];
+    const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+    const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
+    const pngBuffer = await sharp(response.data).png().toBuffer();
+    await ctx.replyWithDocument({ source: pngBuffer, filename: `converted.png` });
+  } catch (error) {
+    console.error('Error konversi JPG ke PNG:', error);
+    await ctx.reply('Maaf, terjadi kesalahan saat memproses gambar.');
+  }
+});
+
+
+// FITUR BARU: Konversi dari Link via CloudConvert
+bot.on('text', async (ctx) => {
+    // Cek apakah pesan merupakan URL
+    const urlRegex = /(http|https|ftp|ftps):\/\/[a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,3}(\/\S*)?/;
+    if (!urlRegex.test(ctx.message.text)) {
+        // Abaikan jika bukan URL (kecuali perintah yg sudah ditangani 'hears')
+        return;
     }
-    
+
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel.', joinChannelKeyboard);
+
+    const userLink = ctx.message.text;
+    let processingMessage = null;
+
     try {
-        await ctx.reply('Gambar diterima, sedang memproses menjadi PNG...');
-        
-        // Ambil foto dengan resolusi tertinggi
-        const photo = ctx.message.photo[ctx.message.photo.length - 1];
-        const fileId = photo.file_id;
-        
-        // Dapatkan link download file dari Telegram
-        const fileLink = await ctx.telegram.getFileLink(fileId);
-        
-        // Unduh gambar menggunakan axios
-        const response = await axios({
-            url: fileLink.href,
-            responseType: 'arraybuffer'
+        // Kirim pesan tunggu
+        processingMessage = await ctx.reply('✅ Link diterima, memulai proses konversi di server CloudConvert... Ini mungkin butuh beberapa menit, mohon bersabar 🙏');
+
+        // Buat 'job' di CloudConvert
+        let job = await cloudConvert.jobs.create({
+            tasks: {
+                'import-link': {
+                    operation: 'import/url',
+                    url: userLink
+                },
+                'convert-to-mp3': {
+                    operation: 'convert',
+                    input: 'import-link',
+                    output_format: 'mp3',
+                    engine: 'ffmpeg',
+                    audio_bitrate: 128000
+                },
+                'export-mp3': {
+                    operation: 'export/url',
+                    input: 'convert-to-mp3',
+                    inline: false,
+                    archive_multiple_files: false
+                }
+            }
         });
-        const buffer = Buffer.from(response.data, 'binary');
-        
-        // Konversi gambar ke PNG menggunakan Sharp
-        const pngBuffer = await sharp(buffer).png().toBuffer();
-        
-        // Kirim kembali sebagai dokumen untuk menjaga kualitas dan format
-        await ctx.replyWithDocument({
-            source: pngBuffer,
-            filename: `converted_by_zhigenbot.png`
-        });
-        
+
+        // Tunggu hingga job selesai
+        job = await cloudConvert.jobs.wait(job.id);
+
+        // Jika job berhasil, dapatkan link download MP3
+        if (job.status === 'finished') {
+            const file = cloudConvert.jobs.getExportUrls(job)[0];
+            const finalFileName = file.filename || 'audio.mp3';
+
+            // Hapus pesan "memproses..."
+            await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+            
+            // Kirim file audio
+            await ctx.replyWithAudio(
+                { url: file.url, filename: finalFileName },
+                { caption: `Konversi selesai! ✨\n\nvia @${ctx.botInfo.username}`, title: finalFileName }
+            );
+        } else {
+            throw new Error(`Job status: ${job.status}`);
+        }
+
     } catch (error) {
-        console.error('Error konversi JPG ke PNG:', error);
-        await ctx.reply('Maaf, terjadi kesalahan saat memproses gambar Anda.');
+        console.error('Error Konversi Link:', error);
+        if (processingMessage) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+        }
+        await ctx.reply('Maaf, terjadi kesalahan saat mengonversi link Anda. Pastikan link valid dan publik.');
     }
 });
-
-
-// --- FITUR BARU: VIDEO to MP3 (SANGAT KOMPLEKS) ---
-// Catatan: Konversi Video ke MP3 di Vercel sangat sulit karena butuh software FFmpeg.
-// Untuk saat ini, kita buat bot merespons bahwa fitur sedang dikembangkan.
-bot.on('video', async (ctx) => {
-    const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) {
-        return ctx.reply('Fitur ini hanya untuk member channel. Silakan join dulu.', joinChannelKeyboard);
-    }
-
-    // Beri tahu user bahwa fitur sedang dikembangkan
-    await ctx.reply('🎬 Video diterima! Mohon maaf, fitur konversi Video ke MP3 ini sangat kompleks dan masih dalam tahap pengembangan lebih lanjut. Terima kasih atas pengertiannya 😊');
-    
-    // Di masa depan, di sinilah logika download dan konversi video akan ditempatkan.
-});
-
 
 // Handler untuk Vercel (Jangan diubah)
 module.exports = async (req, res) => {
