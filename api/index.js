@@ -6,19 +6,17 @@ const sharp = require('sharp');
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME;
-// Kunci API Baru dari RapidAPI
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST;
 
-// Cek semua variabel
 if (!BOT_TOKEN || !CHANNEL_ID || !CHANNEL_USERNAME || !RAPIDAPI_KEY || !RAPIDAPI_HOST) {
-  console.error("Satu atau lebih Environment Variables belum diatur! (Termasuk RapidAPI)");
+  console.error("Satu atau lebih Environment Variables belum diatur!");
   process.exit(1);
 }
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- KEYBOARD & FUNGSI BANTUAN (Tidak ada perubahan signifikan) ---
+// --- KEYBOARD & FUNGSI BANTUAN ---
 const joinChannelKeyboard = Markup.inlineKeyboard([
   [Markup.button.url(`➡️ Gabung Channel`, `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
   [Markup.button.callback(`✅ Saya Sudah Bergabung`, 'check_join')]
@@ -57,7 +55,7 @@ bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
 
-    if (!urlMatch) return; // Abaikan jika bukan link
+    if (!urlMatch) return;
 
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Fitur ini hanya untuk member channel.', joinChannelKeyboard);
@@ -68,37 +66,43 @@ bot.on('text', async (ctx) => {
     try {
         processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader... Mohon tunggu sebentar.');
 
+        // --- INI BAGIAN YANG DIPERBAIKI ---
         const options = {
-            method: 'GET',
-            url: `https://${RAPIDAPI_HOST}/api/video`, // Ganti URL ini jika API Anda berbeda
-            params: { url: userLink },
+            method: 'POST', // 1. Metode diubah menjadi POST
+            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`, // 2. URL Endpoint diperbaiki
             headers: {
+                'Content-Type': 'application/json', // Header penting ditambahkan
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
                 'X-RapidAPI-Host': RAPIDAPI_HOST
+            },
+            data: { // 3. Link dikirim melalui 'data' (body), bukan 'params'
+                url: userLink
             }
         };
 
         const response = await axios.request(options);
         
-        // Cari link audio terbaik dari respons API
-        // Catatan: Struktur 'response.data' mungkin berbeda tergantung API yang Anda pilih
-        const audioLink = response.data.links.find(link => link.audio === true && link.quality === 'highest');
-        
-        if (audioLink && audioLink.url) {
+        // Menambahkan log untuk melihat struktur respons asli dari API
+        console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
+
+        // Mencari link audio dari respons
+        // Catatan: 'response.data.medias' mungkin perlu disesuaikan berdasarkan hasil log di atas
+        const medias = response.data.medias;
+        const audioMedia = medias.find(media => media.type === 'audio' && media.quality === 'highest');
+
+        if (audioMedia && audioMedia.url) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
             
             await ctx.replyWithAudio(
-                { url: audioLink.url },
-                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` }
+                { url: audioMedia.url },
+                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' }
             );
         } else {
-            // Jika tidak ada link audio, mungkin ada link video.
-            // Sebagai alternatif, kirim pesan bahwa audio tidak ditemukan.
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Audio tidak ditemukan, namun video tersedia. Coba link lain.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut. Mungkin video ini tidak memiliki suara atau tidak didukung.');
         }
 
     } catch (error) {
-        console.error(error);
+        console.error('Error Detail:', error.response ? error.response.data : error.message);
         if (processingMessage) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan. Pastikan link Anda benar dan publik, atau coba lagi nanti.');
         } else {
@@ -107,9 +111,8 @@ bot.on('text', async (ctx) => {
     }
 });
 
-
 // Handler untuk Vercel
-module.exports = async (req, res) => {
+module.log = async (req, res) => {
   try {
     await bot.handleUpdate(req.body);
   } finally {
