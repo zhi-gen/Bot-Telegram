@@ -1,7 +1,7 @@
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const sharp = require('sharp');
-const PDFDocument = require('pdfkit'); // LIBRARY BARU KITA
+const PDFDocument = require('pdfkit');
 
 // --- KONFIGURASI PENTING ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -39,7 +39,6 @@ async function isUserSubscribed(userId) {
   }
 }
 
-// Fungsi bantuan untuk mengubah stream PDFKit menjadi Buffer
 function getPdfBuffer(doc) {
     return new Promise((resolve, reject) => {
         const buffers = [];
@@ -54,7 +53,7 @@ bot.start(async (ctx) => {
     userConversionMode.set(ctx.from.id, 'png');
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (isSubscribed) {
-        await ctx.reply('Halo! Saya adalah bot konversi. Silakan pilih menu di bawah.', mainMenuKeyboard);
+        await ctx.reply('Halo! Saya adalah bot konversi file. Silakan pilih menu di bawah.', mainMenuKeyboard);
     } else {
         await ctx.reply('Selamat datang! Untuk menggunakan bot ini, Anda harus bergabung ke channel kami terlebih dahulu.', joinChannelKeyboard);
     }
@@ -95,16 +94,12 @@ bot.on('photo', async (ctx) => {
     try {
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
-        const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
-        const imageBuffer = response.data;
+        const imageBuffer = (await axios({ url: fileLink.href, responseType: 'arraybuffer' })).data;
         
         if (mode === 'pdf') {
             processingMessage = await ctx.reply('📂 Mode PDF aktif, memproses gambar...');
-            // --- INI BAGIAN YANG DIPERBAIKI DENGAN PDFKIT ---
             const imageMetadata = await sharp(imageBuffer).metadata();
-            const doc = new PDFDocument({
-                size: [imageMetadata.width, imageMetadata.height]
-            });
+            const doc = new PDFDocument({ size: [imageMetadata.width, imageMetadata.height] });
             doc.image(imageBuffer, 0, 0, { width: imageMetadata.width, height: imageMetadata.height });
             doc.end();
             const pdfBuffer = await getPdfBuffer(doc);
@@ -126,7 +121,41 @@ bot.on('photo', async (ctx) => {
 
 // FITUR Link Downloader (TIDAK BERUBAH)
 bot.on('text', async (ctx) => {
-    // ... (kode link downloader tetap sama)
+    const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
+    const urlMatch = ctx.message.text.match(urlRegex);
+
+    if (!urlMatch) return;
+
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+
+    const userLink = urlMatch[0];
+    let processingMessage = null;
+
+    try {
+        processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader...');
+        const options = {
+            method: 'POST',
+            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`,
+            headers: { 'Content-Type': 'application/json', 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': RAPIDAPI_HOST },
+            data: { url: userLink }
+        };
+
+        const response = await axios.request(options);
+        const medias = response.data.medias;
+        const audioMedia = medias.find(media => media.type === 'audio');
+
+        if (audioMedia && audioMedia.url) {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
+            await ctx.replyWithAudio({ url: audioMedia.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' });
+        } else {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut.');
+        }
+    } catch (error) {
+        console.error('Error Detail:', error.response ? error.response.data : error.message);
+        if (processingMessage) await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
+        else await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
+    }
 });
 
 // Handler untuk Vercel
