@@ -16,20 +16,21 @@ if (!BOT_TOKEN || !CHANNEL_ID || !CHANNEL_USERNAME || !RAPIDAPI_KEY || !RAPIDAPI
 
 const bot = new Telegraf(BOT_TOKEN);
 
+// --- "MEMORI" BOT UNTUK MENYIMPAN MODE KONVERSI PENGGUNA ---
+const userConversionMode = new Map();
+
 // --- KEYBOARD & FUNGSI BANTUAN ---
 const joinChannelKeyboard = Markup.inlineKeyboard([
   [Markup.button.url(`➡️ Gabung Channel`, `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)],
   [Markup.button.callback(`✅ Saya Sudah Bergabung`, 'check_join')]
 ]);
 
-// --- KEYBOARD DIPERBARUI ---
 const mainMenuKeyboard = Markup.keyboard([
   ['⏳ Link To MP3', '🖼 Jpg To Png'],
   ['📂 Image to PDF'],
   ['📌 About', '💰 Donasi']
 ]).resize();
 
-// Fungsi "Penjaga" utama kita
 async function isUserSubscribed(userId) {
   try {
     const member = await bot.telegram.getChatMember(CHANNEL_ID, userId);
@@ -43,6 +44,8 @@ async function isUserSubscribed(userId) {
 // --- LOGIKA UTAMA BOT ---
 
 bot.start(async (ctx) => {
+    // Set mode default ke 'png' saat memulai
+    userConversionMode.set(ctx.from.id, 'png');
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (isSubscribed) {
         await ctx.reply('Halo! Saya adalah bot konversi. Silakan pilih menu di bawah.', mainMenuKeyboard);
@@ -55,60 +58,53 @@ bot.action('check_join', async (ctx) => {
   const isSubscribed = await isUserSubscribed(ctx.from.id);
   if (isSubscribed) {
     await ctx.deleteMessage();
+    userConversionMode.set(ctx.from.id, 'png'); // Set mode default
     await ctx.reply('Terima kasih! Anda sekarang bisa menggunakan bot.', mainMenuKeyboard);
   } else {
-    await ctx.answerCbQuery('Anda terdeteksi belum bergabung. Silakan bergabung terlebih dahulu.', { show_alert: true });
+    await ctx.answerCbQuery('Anda terdeteksi belum bergabung.', { show_alert: true });
   }
 });
 
-// --- TOMBOL MENU UTAMA DENGAN PENJAGA ---
-async function handleMenu(ctx, replyText) {
+// --- TOMBOL MENU UTAMA DENGAN PENJAGA DAN PENGATUR MODE ---
+async function handleMenu(ctx, mode, replyText) {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
     
+    // Simpan mode yang dipilih user
+    userConversionMode.set(ctx.from.id, mode);
     ctx.reply(replyText);
 }
 
-bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'Silakan kirimkan link video (YouTube, TikTok, FB) untuk diubah ke MP3.'));
-bot.hears('🖼 Jpg To Png', (ctx) => handleMenu(ctx, 'Silakan kirimkan gambar/foto Anda (format JPG) untuk diubah ke PNG.'));
-bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'Silakan kirimkan gambar/foto Anda untuk diubah ke PDF.'));
-bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
-bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung kami melalui 👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
+bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link video (YouTube, TikTok, FB).'));
+bot.hears('🖼 Jpg To Png', (ctx) => handleMenu(ctx, 'png', 'Mode: Gambar ke PNG. Silakan kirimkan gambar/foto Anda.'));
+bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'pdf', 'Mode: Gambar ke PDF. Silakan kirimkan gambar/foto Anda.'));
+bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh admin ganteng dan tidak sombong 😁 :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
+bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung saya, agar bisa menambah fitur lainnya untuk kepentingan bersama melalui, klik👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
 
-// --- PENANGANAN FITUR INTI (DENGAN PENJAGA) ---
-
+// --- PENANGANAN FITUR GAMBAR BERDASARKAN MODE ---
 bot.on('photo', async (ctx) => {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
     
+    // Ambil mode yang tersimpan untuk user ini, default ke 'png' jika tidak ada
+    const mode = userConversionMode.get(ctx.from.id) || 'png';
     let processingMessage = null;
+
     try {
-        // Cek caption untuk menentukan tujuan konversi
-        const caption = ctx.message.caption ? ctx.message.caption.toLowerCase() : '';
-
-        if (caption.includes('pdf')) {
-            // Konversi ke PDF
-            processingMessage = await ctx.reply('📂 Gambar diterima, memproses menjadi PDF...');
-            const photo = ctx.message.photo[ctx.message.photo.length - 1];
-            const fileLink = await ctx.telegram.getFileLink(photo.file_id);
-            const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
-            
-            // Sharp bisa langsung output ke PDF
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+        const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
+        
+        if (mode === 'pdf') {
+            processingMessage = await ctx.reply('📂 Mode PDF aktif, memproses gambar...');
             const pdfBuffer = await sharp(response.data).toFormat('pdf').toBuffer();
-            
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
-            await ctx.replyWithDocument({ source: pdfBuffer, filename: `converted_to_pdf.pdf` }, { caption: `Konversi ke PDF berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
-
-        } else {
-            // Default: Konversi ke PNG
-            processingMessage = await ctx.reply('🖼 Gambar diterima, memproses menjadi PNG...');
-            const photo = ctx.message.photo[ctx.message.photo.length - 1];
-            const fileLink = await ctx.telegram.getFileLink(photo.file_id);
-            const response = await axios({ url: fileLink.href, responseType: 'arraybuffer' });
+            await ctx.replyWithDocument({ source: pdfBuffer, filename: `converted.pdf` }, { caption: `Konversi ke PDF berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
+        } else { // Mode 'png' atau mode default lainnya
+            processingMessage = await ctx.reply('🖼 Mode PNG aktif, memproses gambar...');
             const pngBuffer = await sharp(response.data).png().toBuffer();
-            
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
-            await ctx.replyWithDocument({ source: pngBuffer, filename: `converted_to_png.png` }, { caption: `Konversi ke PNG berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
+            await ctx.replyWithDocument({ source: pngBuffer, filename: `converted.png` }, { caption: `Konversi ke PNG berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
         }
         
     } catch (error) {
@@ -118,11 +114,16 @@ bot.on('photo', async (ctx) => {
     }
 });
 
+// FITUR Link Downloader (TIDAK BERUBAH)
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
 
     if (!urlMatch) return;
+
+    // Pastikan user sedang dalam mode 'mp3' sebelum memproses link
+    const mode = userConversionMode.get(ctx.from.id);
+    if (mode !== 'mp3') return;
 
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
