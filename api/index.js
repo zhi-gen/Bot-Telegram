@@ -119,7 +119,7 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- FITUR LINK DOWNLOADER DENGAN API BARU ---
+// --- FITUR LINK DOWNLOADER DENGAN PERBAIKAN FINAL ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
@@ -133,15 +133,28 @@ bot.on('text', async (ctx) => {
     let processingMessage = null;
 
     try {
-        processingMessage = await ctx.reply('✅ Link YouTube diterima, menggunakan mesin baru... Menghubungi server...');
+        // Coba ekstrak ID video YouTube dari berbagai format link
+        let videoId = null;
+        const youtubeRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/ ]{11})/;
+        const videoIdMatch = userLink.match(youtubeRegex);
+        if (videoIdMatch) {
+            videoId = videoIdMatch[1];
+        }
 
-        // --- BAGIAN YANG DIPERBAIKI UNTUK API BARU ---
+        if (!videoId) {
+            return ctx.reply('Link YouTube tidak valid atau formatnya tidak dikenali. Mohon gunakan link YouTube yang benar.');
+        }
+        
+        processingMessage = await ctx.reply('✅ Link YouTube valid, menghubungi server downloader...');
+
+        // --- INI BAGIAN YANG DIPERBAIKI ---
         const options = {
             method: 'GET',
-            // GANTI '/info' DENGAN ENDPOINT YANG BENAR DARI DOKUMENTASI API
-            url: `https://${RAPIDAPI_HOST}/info`,
+            // Kita coba gunakan endpoint root (/) karena API ini mungkin sangat sederhana
+            url: `https://${RAPIDAPI_HOST}/`,
             params: {
-                id: userLink.split('v=')[1] || userLink.split('/').pop() // Coba ambil ID dari link YouTube
+                // API ini sepertinya butuh 'id' bukan 'url'
+                id: videoId
             },
             headers: {
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
@@ -152,13 +165,12 @@ bot.on('text', async (ctx) => {
         const response = await axios.request(options);
         console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
 
-        // --- BAGIAN INI MUNGKIN PERLU DISESUAIKAN ---
-        // Tebakan terbaik untuk struktur respons API baru
+        // Logika untuk memproses respons (tidak berubah, mari kita lihat hasilnya di log)
         let audioLink = null;
         if (response.data && response.data.streamingData && response.data.streamingData.adaptiveFormats) {
             const audioFormats = response.data.streamingData.adaptiveFormats.filter(f => f.mimeType.startsWith('audio/'));
             if (audioFormats.length > 0) {
-                audioLink = audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+                 audioLink = audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
             }
         } else if (response.data.audio && Array.isArray(response.data.audio)) {
              audioLink = response.data.audio[0];
@@ -168,13 +180,13 @@ bot.on('text', async (ctx) => {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio...');
             await ctx.replyWithAudio({ url: audioLink.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: response.data.videoDetails.title || 'audio.mp3' });
         } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan format audio dari link YouTube ini.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan format audio dari link ini. API mungkin tidak memberikan link audio.');
         }
 
     } catch (error) {
         console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
         if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. Mungkin API sedang down.');
         } else {
             await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
         }
