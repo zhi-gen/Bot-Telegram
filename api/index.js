@@ -50,7 +50,7 @@ function getPdfBuffer(doc) {
 
 // --- LOGIKA UTAMA BOT ---
 bot.start(async (ctx) => {
-    userConversionMode.set(ctx.from.id, 'png');
+    userConversionMode.set(ctx.from.id, 'png'); // Mode default untuk gambar
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (isSubscribed) {
         await ctx.reply('Halo! Saya adalah bot konversi file. Silakan pilih menu di bawah.', mainMenuKeyboard);
@@ -120,11 +120,12 @@ bot.on('photo', async (ctx) => {
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
-    if (!urlMatch) return;
-    const mode = userConversionMode.get(ctx.from.id);
-    if (mode !== 'mp3') return;
+    if (!urlMatch) return; // Abaikan jika bukan link, ini benar
+
+    // !!! BAGIAN KODE YANG SALAH TELAH DIHAPUS DARI SINI !!!
+
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
 
     const userLink = urlMatch[0];
     let processingMessage = null;
