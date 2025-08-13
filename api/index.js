@@ -77,7 +77,7 @@ async function handleMenu(ctx, mode, replyText) {
     ctx.reply(replyText);
 }
 
-bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link video.'));
+bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link YouTube.'));
 bot.hears('🖼 Jpg To Png', (ctx) => handleMenu(ctx, 'png', 'Mode: Gambar ke PNG. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'pdf', 'Mode: Gambar ke PDF. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh admin ganteng dan tidak sombong 😁 :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
@@ -86,7 +86,7 @@ bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung saya, a
 // --- PENANGANAN FITUR GAMBAR BERDASARKAN MODE ---
 bot.on('photo', async (ctx) => {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
     
     const mode = userConversionMode.get(ctx.from.id) || 'png';
     let processingMessage = null;
@@ -106,7 +106,7 @@ bot.on('photo', async (ctx) => {
             
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
             await ctx.replyWithDocument({ source: pdfBuffer, filename: `converted.pdf` }, { caption: `Konversi ke PDF berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
-        } else { // Mode 'png'
+        } else {
             processingMessage = await ctx.reply('🖼 Mode PNG aktif, memproses gambar...');
             const pngBuffer = await sharp(imageBuffer).png().toBuffer();
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
@@ -119,32 +119,29 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- FITUR LINK DOWNLOADER ---
+// --- FITUR LINK DOWNLOADER DENGAN API BARU ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
-
     if (!urlMatch) return;
-
     const mode = userConversionMode.get(ctx.from.id);
     if (mode !== 'mp3') return;
-
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
 
     const userLink = urlMatch[0];
     let processingMessage = null;
 
     try {
-        processingMessage = await ctx.reply('✅ Link diterima, memperbaiki alamat... Menghubungi server downloader...');
+        processingMessage = await ctx.reply('✅ Link YouTube diterima, menggunakan mesin baru... Menghubungi server...');
 
+        // --- BAGIAN YANG DIPERBAIKI UNTUK API BARU ---
         const options = {
             method: 'GET',
-            // GANTI '/GANTI_DENGAN_PATH_YANG_BENAR' DENGAN ENDPOINT DARI RAPIDAPI
-            // Contoh jika pathnya adalah /dl :
-            url: `https://${RAPIDAPI_HOST}/dl`, 
+            // GANTI '/info' DENGAN ENDPOINT YANG BENAR DARI DOKUMENTASI API
+            url: `https://${RAPIDAPI_HOST}/info`,
             params: {
-                url: userLink
+                id: userLink.split('v=')[1] || userLink.split('/').pop() // Coba ambil ID dari link YouTube
             },
             headers: {
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
@@ -155,35 +152,35 @@ bot.on('text', async (ctx) => {
         const response = await axios.request(options);
         console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
 
+        // --- BAGIAN INI MUNGKIN PERLU DISESUAIKAN ---
+        // Tebakan terbaik untuk struktur respons API baru
         let audioLink = null;
-        // Bagian ini mungkin perlu disesuaikan tergantung respons API yang Anda pilih
-        if (response.data.result && response.data.result.formats) {
-            const audioFormats = response.data.result.formats.filter(f => f.audio_channels > 0 && f.video_channels === 0);
+        if (response.data && response.data.streamingData && response.data.streamingData.adaptiveFormats) {
+            const audioFormats = response.data.streamingData.adaptiveFormats.filter(f => f.mimeType.startsWith('audio/'));
             if (audioFormats.length > 0) {
-                 audioLink = audioFormats.sort((a, b) => (b.audio_bitrate || 0) - (a.audio_bitrate || 0))[0];
+                audioLink = audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
             }
-        } else if (response.data && Array.isArray(response.data.links)) {
-             audioLink = response.data.links.find(link => link.audio === true && link.quality === 'highest');
+        } else if (response.data.audio && Array.isArray(response.data.audio)) {
+             audioLink = response.data.audio[0];
         }
         
         if (audioLink && audioLink.url) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio...');
-            await ctx.replyWithAudio({ url: audioLink.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` });
+            await ctx.replyWithAudio({ url: audioLink.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: response.data.videoDetails.title || 'audio.mp3' });
         } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan format audio dari link tersebut. Mohon coba API lain di RapidAPI.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan format audio dari link YouTube ini.');
         }
 
     } catch (error) {
         console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
         if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. API mungkin sedang down atau tidak mendukung link ini.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
         } else {
             await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
         }
     }
 });
 
-// --- INI BAGIAN YANG PENTING DAN KEMARIN HILANG ---
 // Handler untuk Vercel
 module.exports = async (req, res) => {
   try {
