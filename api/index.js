@@ -49,9 +49,8 @@ function getPdfBuffer(doc) {
 }
 
 // --- LOGIKA UTAMA BOT ---
-// (Kode start, action, hears, dan 'photo' tidak berubah)
 bot.start(async (ctx) => {
-    userConversionMode.set(ctx.from.id, 'png');
+    userConversionMode.set(ctx.from.id, 'png'); // Mode default untuk gambar
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (isSubscribed) {
         await ctx.reply('Halo! Saya adalah bot konversi file. Silakan pilih menu di bawah.', mainMenuKeyboard);
@@ -59,6 +58,7 @@ bot.start(async (ctx) => {
         await ctx.reply('Selamat datang! Untuk menggunakan bot ini, Anda harus bergabung ke channel kami terlebih dahulu.', joinChannelKeyboard);
     }
 });
+
 bot.action('check_join', async (ctx) => {
   const isSubscribed = await isUserSubscribed(ctx.from.id);
   if (isSubscribed) {
@@ -69,20 +69,25 @@ bot.action('check_join', async (ctx) => {
     await ctx.answerCbQuery('Anda terdeteksi belum bergabung.', { show_alert: true });
   }
 });
+
 async function handleMenu(ctx, mode, replyText) {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
     userConversionMode.set(ctx.from.id, mode);
     ctx.reply(replyText);
 }
-bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link YouTube, TikTok, atau FB.'));
+
+bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link video.'));
 bot.hears('🖼 Jpg To Png', (ctx) => handleMenu(ctx, 'png', 'Mode: Gambar ke PNG. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'pdf', 'Mode: Gambar ke PDF. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh admin ganteng dan tidak sombong 😁 :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
 bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung saya, agar bisa menambah fitur lainnya untuk kepentingan bersama melalui, klik👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
+
+// --- PENANGANAN FITUR GAMBAR BERDASARKAN MODE ---
 bot.on('photo', async (ctx) => {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    
     const mode = userConversionMode.get(ctx.from.id) || 'png';
     let processingMessage = null;
     try {
@@ -111,42 +116,39 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- FITUR LINK DOWNLOADER DENGAN PERBAIKAN FINAL ---
+// --- FITUR LINK DOWNLOADER ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
-    if (!urlMatch) return;
-    const mode = userConversionMode.get(ctx.from.id);
-    if (mode !== 'mp3') return;
+    if (!urlMatch) return; // Abaikan jika bukan link
+
+    // --- BAGIAN INI DIHAPUS ---
+    // const mode = userConversionMode.get(ctx.from.id);
+    // if (mode !== 'mp3') return; 
+    // Kita ingin bot selalu mencoba memproses link, tidak peduli modenya apa.
+
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
 
     const userLink = urlMatch[0];
     let processingMessage = null;
 
     try {
-        processingMessage = await ctx.reply('✅ Link diterima, meminta info unduhan ke server...');
-
+        processingMessage = await ctx.reply('✅ Link diterima, menghubungi server downloader...');
+        
         const options = {
             method: 'GET',
-            url: `https://${RAPIDAPI_HOST}/api/v2/info`, // Menggunakan endpoint yang benar
-            params: {
-                url: userLink
-            },
-            headers: {
-                'X-RapidAPI-Key': RAPIDAPI_KEY,
-                'X-RapidAPI-Host': RAPIDAPI_HOST
-            }
+            url: `https://${RAPIDAPI_HOST}/api/v2/info`,
+            params: { url: userLink },
+            headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': RAPIDAPI_HOST }
         };
 
         const response = await axios.request(options);
-
-        // Mencari link download MP3 dari struktur data yang benar
+        
         if (response.data.links && response.data.links.mp3) {
-             // Ambil link MP3 dengan kualitas terbaik (kualitas tertinggi ada di akhir)
             const mp3Links = response.data.links.mp3;
-            const bestMp3 = mp3Links[Object.keys(mp3Links).pop()]; // Ambil link terakhir/terbaik
-
+            const bestMp3 = mp3Links[Object.keys(mp3Links).pop()];
+            
             if (bestMp3 && bestMp3.url) {
                 await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, `✅ Info ditemukan! Mengirimkan MP3: "${response.data.title}"`);
                 await ctx.replyWithAudio({ url: bestMp3.url, filename: `${response.data.title}.mp3` }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` });
@@ -160,7 +162,7 @@ bot.on('text', async (ctx) => {
     } catch (error) {
         console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
         if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan. API mungkin tidak mendukung link ini atau sedang down.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. API mungkin tidak mendukung link ini atau sedang down.');
         } else {
             await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
         }
