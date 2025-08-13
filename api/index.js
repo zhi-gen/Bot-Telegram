@@ -50,7 +50,7 @@ function getPdfBuffer(doc) {
 
 // --- LOGIKA UTAMA BOT ---
 bot.start(async (ctx) => {
-    userConversionMode.set(ctx.from.id, 'png'); // Mode default untuk gambar
+    userConversionMode.set(ctx.from.id, 'png');
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (isSubscribed) {
         await ctx.reply('Halo! Saya adalah bot konversi file. Silakan pilih menu di bawah.', mainMenuKeyboard);
@@ -72,7 +72,7 @@ bot.action('check_join', async (ctx) => {
 
 async function handleMenu(ctx, mode, replyText) {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
     userConversionMode.set(ctx.from.id, mode);
     ctx.reply(replyText);
 }
@@ -83,7 +83,6 @@ bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'pdf', 'Mode: Gambar ke 
 bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh admin ganteng dan tidak sombong 😁 :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
 bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung saya, agar bisa menambah fitur lainnya untuk kepentingan bersama melalui, klik👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
 
-// --- PENANGANAN FITUR GAMBAR BERDASARKAN MODE ---
 bot.on('photo', async (ctx) => {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
@@ -116,16 +115,12 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- FITUR LINK DOWNLOADER ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
-    if (!urlMatch) return; // Abaikan jika bukan link, ini benar
-
-    // !!! BAGIAN KODE YANG SALAH TELAH DIHAPUS DARI SINI !!!
-
+    if (!urlMatch) return;
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
 
     const userLink = urlMatch[0];
     let processingMessage = null;
@@ -140,30 +135,27 @@ bot.on('text', async (ctx) => {
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
                 'X-RapidAPI-Host': RAPIDAPI_HOST
             },
-            data: {
-                url: userLink
-            }
+            data: { url: userLink }
         };
 
         const response = await axios.request(options);
         const responseData = response.data;
-
         const videoTitle = responseData.title || 'audio';
         const medias = responseData.medias;
         const audioMedia = medias.find(media => media.type === 'audio');
         
         if (audioMedia && audioMedia.url) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, `✅ Info ditemukan! Mengirimkan MP3: "${videoTitle}"`);
-            await ctx.replyWithAudio(
-                { url: audioMedia.url, filename: `${videoTitle}.mp3` },
-                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` }
-            );
+            await ctx.replyWithAudio({ url: audioMedia.url, filename: `${videoTitle}.mp3` }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` });
         } else {
             throw new Error('Gagal menemukan link audio dalam respons API.');
         }
 
     } catch (error) {
-        console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
+        // --- INI BAGIAN YANG DIPERBAIKI ---
+        // Mencatat keseluruhan objek error untuk diagnosis yang lebih baik
+        console.error('Error Detail Obyek Penuh:', error);
+        
         if (processingMessage) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. API mungkin tidak mendukung link ini atau sedang down.');
         } else {
