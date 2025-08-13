@@ -157,7 +157,7 @@ bot.on('text', async (ctx) => {
 
         let audioLink = null;
         // Bagian ini mungkin perlu disesuaikan tergantung respons API yang Anda pilih
-        if (response.data && response.data.result && response.data.result.formats) {
+        if (response.data.result && response.data.result.formats) {
             const audioFormats = response.data.result.formats.filter(f => f.audio_channels > 0 && f.video_channels === 0);
             if (audioFormats.length > 0) {
                  audioLink = audioFormats.sort((a, b) => (b.audio_bitrate || 0) - (a.audio_bitrate || 0))[0];
