@@ -77,7 +77,7 @@ async function handleMenu(ctx, mode, replyText) {
     ctx.reply(replyText);
 }
 
-bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link YouTube.'));
+bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link video.'));
 bot.hears('🖼 Jpg To Png', (ctx) => handleMenu(ctx, 'png', 'Mode: Gambar ke PNG. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'pdf', 'Mode: Gambar ke PDF. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh admin ganteng dan tidak sombong 😁 :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
@@ -90,12 +90,10 @@ bot.on('photo', async (ctx) => {
     
     const mode = userConversionMode.get(ctx.from.id) || 'png';
     let processingMessage = null;
-
     try {
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
         const imageBuffer = (await axios({ url: fileLink.href, responseType: 'arraybuffer' })).data;
-        
         if (mode === 'pdf') {
             processingMessage = await ctx.reply('📂 Mode PDF aktif, memproses gambar...');
             const imageMetadata = await sharp(imageBuffer).metadata();
@@ -103,7 +101,6 @@ bot.on('photo', async (ctx) => {
             doc.image(imageBuffer, 0, 0, { width: imageMetadata.width, height: imageMetadata.height });
             doc.end();
             const pdfBuffer = await getPdfBuffer(doc);
-            
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
             await ctx.replyWithDocument({ source: pdfBuffer, filename: `converted.pdf` }, { caption: `Konversi ke PDF berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
         } else {
@@ -119,7 +116,7 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// --- FITUR LINK DOWNLOADER DENGAN PERBAIKAN FINAL ---
+// --- FITUR LINK DOWNLOADER (DENGAN LOGIKA YANG DIPERBAIKI) ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
@@ -131,62 +128,43 @@ bot.on('text', async (ctx) => {
 
     const userLink = urlMatch[0];
     let processingMessage = null;
-
     try {
-        // Coba ekstrak ID video YouTube dari berbagai format link
-        let videoId = null;
-        const youtubeRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/ ]{11})/;
-        const videoIdMatch = userLink.match(youtubeRegex);
-        if (videoIdMatch) {
-            videoId = videoIdMatch[1];
-        }
-
-        if (!videoId) {
-            return ctx.reply('Link YouTube tidak valid atau formatnya tidak dikenali. Mohon gunakan link YouTube yang benar.');
-        }
+        processingMessage = await ctx.reply('✅ Link diterima, menghubungi server downloader...');
         
-        processingMessage = await ctx.reply('✅ Link YouTube valid, menghubungi server downloader...');
-
-        // --- INI BAGIAN YANG DIPERBAIKI ---
+        // Menggunakan konfigurasi yang benar untuk API social-download-all-in-one
         const options = {
-            method: 'GET',
-            // Kita coba gunakan endpoint root (/) karena API ini mungkin sangat sederhana
-            url: `https://${RAPIDAPI_HOST}/`,
-            params: {
-                // API ini sepertinya butuh 'id' bukan 'url'
-                id: videoId
-            },
+            method: 'POST',
+            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`,
             headers: {
+                'Content-Type': 'application/json',
                 'X-RapidAPI-Key': RAPIDAPI_KEY,
                 'X-RapidAPI-Host': RAPIDAPI_HOST
+            },
+            data: {
+                url: userLink
             }
         };
 
         const response = await axios.request(options);
         console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
 
-        // Logika untuk memproses respons (tidak berubah, mari kita lihat hasilnya di log)
-        let audioLink = null;
-        if (response.data && response.data.streamingData && response.data.streamingData.adaptiveFormats) {
-            const audioFormats = response.data.streamingData.adaptiveFormats.filter(f => f.mimeType.startsWith('audio/'));
-            if (audioFormats.length > 0) {
-                 audioLink = audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-            }
-        } else if (response.data.audio && Array.isArray(response.data.audio)) {
-             audioLink = response.data.audio[0];
-        }
-        
-        if (audioLink && audioLink.url) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio...');
-            await ctx.replyWithAudio({ url: audioLink.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: response.data.videoDetails.title || 'audio.mp3' });
+        const medias = response.data.medias;
+        const audioMedia = medias.find(media => media.type === 'audio');
+
+        if (audioMedia && audioMedia.url) {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
+            await ctx.replyWithAudio(
+                { url: audioMedia.url },
+                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' }
+            );
         } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan format audio dari link ini. API mungkin tidak memberikan link audio.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut. Mungkin video ini tidak memiliki suara.');
         }
 
     } catch (error) {
         console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
         if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. Mungkin API sedang down.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. API mungkin sedang down atau tidak mendukung link ini.');
         } else {
             await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
         }
