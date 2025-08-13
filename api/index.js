@@ -86,7 +86,7 @@ bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung saya, a
 // --- PENANGANAN FITUR GAMBAR BERDASARKAN MODE ---
 bot.on('photo', async (ctx) => {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
     
     const mode = userConversionMode.get(ctx.from.id) || 'png';
     let processingMessage = null;
@@ -99,7 +99,9 @@ bot.on('photo', async (ctx) => {
         if (mode === 'pdf') {
             processingMessage = await ctx.reply('📂 Mode PDF aktif, memproses gambar...');
             const imageMetadata = await sharp(imageBuffer).metadata();
-            const doc = new PDFDocument({ size: [imageMetadata.width, imageMetadata.height] });
+            const doc = new PDFDocument({
+                size: [imageMetadata.width, imageMetadata.height]
+            });
             doc.image(imageBuffer, 0, 0, { width: imageMetadata.width, height: imageMetadata.height });
             doc.end();
             const pdfBuffer = await getPdfBuffer(doc);
@@ -119,12 +121,16 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// FITUR Link Downloader (TIDAK BERUBAH)
+// --- FITUR LINK DOWNLOADER ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
 
     if (!urlMatch) return;
+
+    // Hanya proses jika user sedang dalam mode 'mp3'
+    const mode = userConversionMode.get(ctx.from.id);
+    if (mode !== 'mp3') return;
 
     const isSubscribed = await isUserSubscribed(ctx.from.id);
     if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
@@ -133,28 +139,46 @@ bot.on('text', async (ctx) => {
     let processingMessage = null;
 
     try {
-        processingMessage = await ctx.reply('✅ Link diterima, sedang menghubungi server downloader...');
+        processingMessage = await ctx.reply('✅ Link diterima, menggunakan mesin baru... Menghubungi server downloader...');
         const options = {
-            method: 'POST',
-            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`,
-            headers: { 'Content-Type': 'application/json', 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': RAPIDAPI_HOST },
-            data: { url: userLink }
+            method: 'GET',
+            url: `https://${RAPIDAPI_HOST}/`,
+            params: { url: userLink },
+            headers: {
+                'X-RapidAPI-Key': RAPIDAPI_KEY,
+                'X-RapidAPI-Host': RAPIDAPI_HOST
+            }
         };
 
         const response = await axios.request(options);
-        const medias = response.data.medias;
-        const audioMedia = medias.find(media => media.type === 'audio');
+        
+        console.log('Struktur Respons API:', JSON.stringify(response.data, null, 2));
 
-        if (audioMedia && audioMedia.url) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio MP3...');
-            await ctx.replyWithAudio({ url: audioMedia.url }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}`, title: audioMedia.title || 'audio.mp3' });
-        } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan audio dari link tersebut.');
+        let audioLink = null;
+        if (response.data.result && response.data.result.formats) {
+            const audioFormats = response.data.result.formats.filter(f => f.audio_channels > 0 && f.video_channels === 0);
+            if (audioFormats.length > 0) {
+                 audioLink = audioFormats.sort((a, b) => (b.audio_bitrate || 0) - (a.audio_bitrate || 0))[0];
+            }
         }
+        
+        if (audioLink && audioLink.url) {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '✅ Video ditemukan! Mengirimkan audio...');
+            await ctx.replyWithAudio(
+                { url: audioLink.url },
+                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` }
+            );
+        } else {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Gagal menemukan format audio dari link tersebut.');
+        }
+
     } catch (error) {
-        console.error('Error Detail:', error.response ? error.response.data : error.message);
-        if (processingMessage) await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
-        else await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
+        console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
+        if (processingMessage) {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda.');
+        } else {
+            await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
+        }
     }
 });
 
