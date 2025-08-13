@@ -48,10 +48,6 @@ function getPdfBuffer(doc) {
     });
 }
 
-// Fungsi untuk menunda eksekusi (menunggu proses konversi)
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-
 // --- LOGIKA UTAMA BOT ---
 bot.start(async (ctx) => {
     userConversionMode.set(ctx.from.id, 'png');
@@ -76,22 +72,51 @@ bot.action('check_join', async (ctx) => {
 
 async function handleMenu(ctx, mode, replyText) {
     const isSubscribed = await isUserSubscribed(ctx.from.id);
-    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    if (!isSubscribed) return ctx.reply('Akses ditolak. Anda harus menjadi anggota channel untuk menggunakan fitur ini.', joinChannelKeyboard);
     userConversionMode.set(ctx.from.id, mode);
     ctx.reply(replyText);
 }
 
-bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link YouTube.'));
+bot.hears('⏳ Link To MP3', (ctx) => handleMenu(ctx, 'mp3', 'Mode: Link ke MP3. Silakan kirimkan link video.'));
 bot.hears('🖼 Jpg To Png', (ctx) => handleMenu(ctx, 'png', 'Mode: Gambar ke PNG. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📂 Image to PDF', (ctx) => handleMenu(ctx, 'pdf', 'Mode: Gambar ke PDF. Silakan kirimkan gambar/foto Anda.'));
 bot.hears('📌 About', (ctx) => ctx.replyWithHTML(`Ini adalah bot konversi yang dibuat oleh admin ganteng dan tidak sombong 😁 :\n💬 <a href="https://t.me/BloggerManado">Zhigen</a>`));
 bot.hears('💰 Donasi', (ctx) => ctx.replyWithHTML(`Anda bisa mendukung saya, agar bisa menambah fitur lainnya untuk kepentingan bersama melalui, klik👇\n☕ <a href="https://saweria.co/Zhigen">Uang Kopi</a>`));
 
+// --- PENANGANAN FITUR GAMBAR BERDASARKAN MODE ---
 bot.on('photo', async (ctx) => {
-    // Kode konversi gambar (tidak berubah)
+    const isSubscribed = await isUserSubscribed(ctx.from.id);
+    if (!isSubscribed) return ctx.reply('Akses ditolak...', joinChannelKeyboard);
+    
+    const mode = userConversionMode.get(ctx.from.id) || 'png';
+    let processingMessage = null;
+    try {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+        const imageBuffer = (await axios({ url: fileLink.href, responseType: 'arraybuffer' })).data;
+        if (mode === 'pdf') {
+            processingMessage = await ctx.reply('📂 Mode PDF aktif, memproses gambar...');
+            const imageMetadata = await sharp(imageBuffer).metadata();
+            const doc = new PDFDocument({ size: [imageMetadata.width, imageMetadata.height] });
+            doc.image(imageBuffer, 0, 0, { width: imageMetadata.width, height: imageMetadata.height });
+            doc.end();
+            const pdfBuffer = await getPdfBuffer(doc);
+            await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+            await ctx.replyWithDocument({ source: pdfBuffer, filename: `converted.pdf` }, { caption: `Konversi ke PDF berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
+        } else {
+            processingMessage = await ctx.reply('🖼 Mode PNG aktif, memproses gambar...');
+            const pngBuffer = await sharp(imageBuffer).png().toBuffer();
+            await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+            await ctx.replyWithDocument({ source: pngBuffer, filename: `converted.png` }, { caption: `Konversi ke PNG berhasil! ✨\n\nvia @${ctx.botInfo.username}` });
+        }
+    } catch (error) {
+        console.error('Error konversi gambar:', error);
+        if (processingMessage) await ctx.telegram.deleteMessage(ctx.chat.id, processingMessage.message_id);
+        await ctx.reply('Maaf, terjadi kesalahan saat memproses gambar Anda.');
+    }
 });
 
-// --- FITUR LINK DOWNLOADER DENGAN PERBAIKAN FINAL ---
+// --- FITUR LINK DOWNLOADER ---
 bot.on('text', async (ctx) => {
     const urlRegex = /(http|https):\/\/[^\s$.?#].[^\s]*/i;
     const urlMatch = ctx.message.text.match(urlRegex);
@@ -103,47 +128,43 @@ bot.on('text', async (ctx) => {
 
     const userLink = urlMatch[0];
     let processingMessage = null;
-
     try {
-        processingMessage = await ctx.reply('✅ Link diterima, memulai proses konversi di server eksternal...');
-
-        // --- LANGKAH 1: MENDAPATKAN PROGRESS URL ---
-        const initialOptions = {
-            method: 'GET',
-            url: `https://${RAPIDAPI_HOST}/api/v1/info`, // Menggunakan endpoint yang benar
-            params: { url: userLink },
-            headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': RAPIDAPI_HOST }
+        processingMessage = await ctx.reply('✅ Link diterima, menghubungi server downloader...');
+        
+        const options = {
+            method: 'POST',
+            url: `https://${RAPIDAPI_HOST}/v1/social/autolink`,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-RapidAPI-Key': RAPIDAPI_KEY,
+                'X-RapidAPI-Host': RAPIDAPI_HOST
+            },
+            data: {
+                url: userLink
+            }
         };
 
-        const initialResponse = await axios.request(initialOptions);
+        const response = await axios.request(options);
+        const responseData = response.data;
+
+        const videoTitle = responseData.title || 'audio';
+        const medias = responseData.medias;
+        const audioMedia = medias.find(media => media.type === 'audio');
         
-        if (!initialResponse.data.progress_url) {
-            throw new Error('Gagal mendapatkan progress URL dari API.');
-        }
-
-        const progressUrl = initialResponse.data.progress_url;
-        await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, '⏳ Server sedang memproses video Anda... Mohon tunggu sekitar 10-20 detik.');
-
-        // --- LANGKAH 2: MENUNGGU DAN MENGAMBIL LINK DOWNLOAD ---
-        await sleep(15000); // Tunggu 15 detik untuk memberi waktu server mengonversi
-
-        const finalResponse = await axios.get(progressUrl);
-
-        // Mencari link download MP3 dari data progres
-        const mp3LinkData = finalResponse.data.download_links.find(link => link.type === 'mp3');
-        
-        if (mp3LinkData && mp3LinkData.url) {
-            const title = finalResponse.data.title || 'audio';
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, `✅ Konversi selesai! Mengirimkan MP3: "${title}"`);
-            await ctx.replyWithAudio({ url: mp3LinkData.url, filename: `${title}.mp3` }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` });
+        if (audioMedia && audioMedia.url) {
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, `✅ Info ditemukan! Mengirimkan MP3: "${videoTitle}"`);
+            await ctx.replyWithAudio(
+                { url: audioMedia.url, filename: `${videoTitle}.mp3` },
+                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` }
+            );
         } else {
-            throw new Error('Tidak ditemukan link download MP3 setelah menunggu.');
+            throw new Error('Gagal menemukan link audio dalam respons API.');
         }
 
     } catch (error) {
         console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
         if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan. API mungkin tidak mendukung link ini, sedang down, atau video terlalu panjang.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. API mungkin tidak mendukung link ini atau sedang down.');
         } else {
             await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
         }
