@@ -144,20 +144,22 @@ bot.on('text', async (ctx) => {
         const medias = responseData.medias;
         const audioMedia = medias.find(media => media.type === 'audio');
         
-        if (audioMedia && audioMedia.url) {
+        // --- INI BAGIAN QUALITY CONTROL YANG BARU ---
+        if (audioMedia && audioMedia.url && typeof audioMedia.url === 'string' && audioMedia.url.startsWith('http')) {
             await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, `✅ Info ditemukan! Mengirimkan MP3: "${videoTitle}"`);
-            await ctx.replyWithAudio({ url: audioMedia.url, filename: `${videoTitle}.mp3` }, { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` });
+            await ctx.replyWithAudio(
+                { url: audioMedia.url, filename: `${videoTitle}.mp3` },
+                { caption: `Berhasil diunduh! ✨\n\nvia @${ctx.botInfo.username}` }
+            );
         } else {
-            throw new Error('Gagal menemukan link audio dalam respons API.');
+            // Jika link tidak valid atau tidak ada, lempar error yang jelas
+            throw new Error('API tidak memberikan link audio yang valid untuk video ini.');
         }
 
     } catch (error) {
-        // --- INI BAGIAN YANG DIPERBAIKI ---
-        // Mencatat keseluruhan objek error untuk diagnosis yang lebih baik
-        console.error('Error Detail Obyek Penuh:', error);
-        
+        console.error('Error Detail:', error.response ? JSON.stringify(error.response.data) : error.message);
         if (processingMessage) {
-            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, terjadi kesalahan pada link Anda. API mungkin tidak mendukung link ini atau sedang down.');
+            await ctx.telegram.editMessageText(ctx.chat.id, processingMessage.message_id, null, 'Maaf, API gagal memproses link ini. Kemungkinan video ini dilindungi atau tidak didukung. Silakan coba link lain.');
         } else {
             await ctx.reply('Maaf, terjadi kesalahan pada link Anda.');
         }
